@@ -8,7 +8,6 @@ textstat>=0.7
 accelerate>=1.0
 
 # Training only (needed on Colab, not required to serve inference):
-#   trl>=0.12
 #   datasets>=3.0
 #   scikit-learn>=1.5
 # torch is installed separately (CPU wheel in Docker, GPU wheel on Colab).
