@@ -21,7 +21,7 @@ hackathon.
 - **Task:** biomedical sentence in → plain-language rewrite out, targeting a
   6th-grade reading level while preserving medical facts.
 - **Live app:** https://huggingface.co/spaces/ecooley/PlainMed
-- **Repo:** [_add your GitHub URL here_](https://github.com/ethancooley/Plain-Med)
+- **Repo:** (https://github.com/ethancooley/Plain-Med)
 
 ## What the model learned (before / after)
 
