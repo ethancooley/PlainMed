@@ -1,3 +1,14 @@
+---
+title: PlainMed
+emoji: 🩺
+colorFrom: blue
+colorTo: green
+sdk: gradio
+sdk_version: 5.9.1
+app_file: app.py
+pinned: false
+---
+
 # PlainMed — Plain-Language Medical Rewriter
 
 Fine-tunes a small LLM to translate clinical and biomedical text into plain
@@ -54,16 +65,27 @@ python scripts/model.py predict "..." --base   # base model, for comparison
 
 ## Deployment
 
-Deployed on **Hugging Face Spaces** (Docker SDK, free CPU tier — 16 GB RAM,
-which comfortably holds the merged 1.5B model; Render's 512 MB free/Starter
-tiers do not). The `Dockerfile` serves the FastAPI app on port 7860.
+Deployed as a **Gradio Space on Hugging Face ZeroGPU** — the free tier for
+personal accounts in good standing (up to 2 ZeroGPU Spaces free). ZeroGPU
+attaches an H200 GPU per request via the `@spaces.GPU` decorator in `app.py`
+and releases it after, which keeps the Space free within the daily GPU quota.
+Because a GPU is available per call, both the fine-tuned and base models load
+and the before/after comparison runs live.
+
+(Render's free tier — 512 MB — cannot hold a 1.5B model, and HF Docker/CPU-Basic
+Spaces are no longer free, which is why ZeroGPU is the path here.)
 
 To deploy:
-1. Create a Space (Docker SDK) under your HF account.
-2. Push this repo to the Space. The adapter in `models/plainmed-lora/` is
-   loaded at startup; track it with Git LFS if it exceeds 10 MB (see below).
-3. First request is slow on CPU (model load + generation); later ones are
-   faster.
+1. Create a new **Gradio** Space under your HF account. On a free account the
+   runtime will be ZeroGPU automatically.
+2. Push this repo to the Space. `app.py` is the entry point; the adapter in
+   `models/plainmed-lora/` loads at import and is moved to the GPU per call.
+   Track the adapter with Git LFS if it exceeds 10 MB (see below).
+3. First request warms the models; later ones are fast on the GPU.
+
+`app.py` guards the `spaces` import, so the same file also runs locally
+(`python app.py`) on CPU or a local GPU. A FastAPI variant is kept in
+`app/server.py` for non-Gradio hosting.
 
 ## Data
 
@@ -78,10 +100,11 @@ Verify PLABA's current access terms before relying on it.
 README.md
 requirements.txt
 setup.py                 <- data -> features -> train
-main.py                  <- launch the app
-Dockerfile               <- HF Spaces deployment
+app.py                   <- Gradio app on ZeroGPU (runs inference)
+main.py                  <- launch the FastAPI variant locally
+Dockerfile               <- optional: FastAPI/Docker hosting
 app/
-  server.py              <- FastAPI app + HTML UI (runs inference)
+  server.py              <- FastAPI app + HTML UI (alternative host)
 scripts/
   make_dataset.py        <- acquire PLABA (seed fallback)
   build_features.py      <- format into chat examples, train/val split

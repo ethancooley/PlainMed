@@ -1,13 +1,12 @@
-# Inference + app (installed on Hugging Face Spaces / Render)
+# App on Hugging Face ZeroGPU (Gradio SDK). torch with CUDA is provided by the
+# ZeroGPU Space image, so it is intentionally NOT pinned here.
+gradio>=5.9
+spaces>=0.30
 transformers>=4.46,<5
 peft>=0.13
-fastapi>=0.115
-uvicorn>=0.32
-pydantic>=2.9
 textstat>=0.7
 accelerate>=1.0
 
-# Training only (needed on Colab, not required to serve inference):
+# Training only (run on Colab, not needed to serve inference):
 #   datasets>=3.0
 #   scikit-learn>=1.5
-# torch is installed separately (CPU wheel in Docker, GPU wheel on Colab).
