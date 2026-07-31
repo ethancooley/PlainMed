@@ -42,23 +42,36 @@ SYSTEM_PROMPT = (
     "for a sixth-grade reading level. Return only the rewritten text."
 )
 
-# Load tokenizer and both models once at import, on CPU. They are moved to the
-# GPU inside the decorated function, where ZeroGPU has attached one.
+# Load tokenizer and the base model once at import, on CPU. The LoRA adapter
+# is loaded lazily on the first request (see _ensure_tuned): merging touches
+# CUDA through ZeroGPU's patching layer, and no GPU is attached at import time.
 tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
 base_model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, dtype=torch.float16)
-
-_tuned = AutoModelForCausalLM.from_pretrained(BASE_MODEL, dtype=torch.float16)
-if ADAPTER_DIR.exists():
-    from peft import PeftModel
-
-    _tuned = PeftModel.from_pretrained(_tuned, str(ADAPTER_DIR)).merge_and_unload()
-tuned_model = _tuned
-
 base_model.eval()
-tuned_model.eval()
+
+tuned_model = None  # populated on first request by _ensure_tuned()
+
+
+def _ensure_tuned():
+    """Load and merge the LoRA adapter once, on first use. Returns the model.
+
+    Deferred out of import time so no CUDA op runs before ZeroGPU attaches a
+    GPU. If no adapter is present, falls back to the base model.
+    """
+    global tuned_model
+    if tuned_model is None:
+        model = AutoModelForCausalLM.from_pretrained(BASE_MODEL, dtype=torch.float16)
+        if ADAPTER_DIR.exists():
+            from peft import PeftModel
+
+            model = PeftModel.from_pretrained(model, str(ADAPTER_DIR))
+            model = model.merge_and_unload()
+        model.eval()
+        tuned_model = model
+    return tuned_model
 
 
 def _grade(text: str) -> float:
@@ -94,10 +107,11 @@ def rewrite(text: str) -> Tuple[str, str, str]:
         return "", "", "Enter some clinical text above."
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    tuned_model.to(device)
+    tuned = _ensure_tuned()
+    tuned.to(device)
     base_model.to(device)
 
-    tuned_out = _generate(tuned_model, text, device)
+    tuned_out = _generate(tuned, text, device)
     base_out = _generate(base_model, text, device)
 
     summary = (
