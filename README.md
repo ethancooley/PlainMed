@@ -9,7 +9,7 @@ app_file: app.py
 pinned: false
 ---
 
-# PlainMed — Plain-Language Medical Rewriter
+# Plain-Med — Plain-Language Medical Rewriter
 
 Fine-tunes a small LLM to translate clinical and biomedical text into plain
 language a patient can understand. Built for the AIPI generative-modeling
@@ -20,8 +20,8 @@ hackathon.
   trained; the base weights stay frozen.
 - **Task:** biomedical sentence in → plain-language rewrite out, targeting a
   6th-grade reading level while preserving medical facts.
-- **Live app:** _add your deployed URL here_
-- **Repo:** _add your GitHub URL here_
+- **Live app:** https://huggingface.co/spaces/ecooley/PlainMed
+- **Repo:** [_add your GitHub URL here_](https://github.com/ethancooley/Plain-Med)
 
 ## What the model learned (before / after)
 
