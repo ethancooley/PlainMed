@@ -141,6 +141,7 @@ review comments, then squash-merged.
 
 ## Attribution
 - Base model: Qwen2.5-1.5B-Instruct (Alibaba / Qwen), via Hugging Face.
-- LoRA/SFT training follows the TRL docs: https://huggingface.co/docs/trl
+- LoRA fine-tuning uses PEFT + the transformers Trainer:
+  https://huggingface.co/docs/peft
 - PLABA dataset: U.S. National Library of Medicine.
 - Readability: `textstat`.

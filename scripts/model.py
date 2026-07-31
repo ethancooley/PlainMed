@@ -7,8 +7,8 @@ The resulting adapter is a few tens of MB, which keeps deployment light.
 Training is designed for a single free Colab T4 GPU. Inference (predict) runs
 on CPU so it can be served on a free Hugging Face Space.
 
-External libraries: transformers, peft, trl, datasets (all standard HF stack).
-LoRA/SFT usage follows the TRL documentation: https://huggingface.co/docs/trl
+External libraries: transformers, peft, datasets (standard HF stack).
+LoRA usage follows the PEFT documentation: https://huggingface.co/docs/peft
 """
 
 import argparse
@@ -37,39 +37,57 @@ def _device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def train(epochs: int = 8, lr: float = 2e-4, rank: int = 16) -> Path:
+def _supports_bf16() -> bool:
+    """True only on GPUs with real bf16 support (Ampere / sm_80+).
+
+    Turing cards (e.g. the free Colab T4, sm_75) do NOT support bf16 and will
+    error if it is requested, so training must fall back to fp16 there.
+    """
+    if not torch.cuda.is_available():
+        return False
+    major, _ = torch.cuda.get_device_capability()
+    return major >= 8
+
+
+def _train_dtype() -> torch.dtype:
+    """Pick the training dtype the current device actually supports."""
+    if not torch.cuda.is_available():
+        return torch.float32
+    return torch.bfloat16 if _supports_bf16() else torch.float16
+
+
+def train(epochs: int = 3, lr: float = 2e-4, rank: int = 16,
+          max_length: int = 1024) -> Path:
     """Fine-tune a LoRA adapter and save it to models/plainmed-lora.
 
+    Uses the standard transformers Trainer with PEFT. Precision is chosen from
+    the actual GPU: bf16 on Ampere+ (sm_80+), fp16 on Turing (e.g. the free
+    Colab T4), fp32 on CPU. This avoids the bf16-on-T4 crash.
+
     Args:
-        epochs: number of passes over the training set.
+        epochs: passes over the training set. Default 3 suits ~100 pairs; a
+            larger dataset can use fewer, a tiny one more.
         lr: learning rate for the adapter parameters.
         rank: LoRA rank (capacity of the adapter).
+        max_length: token truncation length for training examples.
 
     Returns:
         Path to the saved adapter directory.
     """
-    # Local imports keep CPU-only inference environments from needing trl/peft.
-    from peft import LoraConfig
-    from trl import SFTConfig, SFTTrainer
+    # Local imports keep CPU-only inference environments from needing peft here.
+    from peft import LoraConfig, get_peft_model
+    from transformers import (
+        DataCollatorForLanguageModeling, Trainer, TrainingArguments,
+    )
 
     tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
-        torch_dtype=torch.bfloat16 if _device() == "cuda" else torch.float32,
-        device_map=_device(),
+        BASE_MODEL, dtype=_train_dtype(), device_map=_device()
     )
-
-    train_ds = load_dataset(
-        "json", data_files=str(PROC_DIR / "train.jsonl"), split="train"
-    )
-    val_ds = load_dataset(
-        "json", data_files=str(PROC_DIR / "val.jsonl"), split="train"
-    )
-
-    lora_config = LoraConfig(
+    model = get_peft_model(model, LoraConfig(
         r=rank,
         lora_alpha=rank * 2,
         lora_dropout=0.05,
@@ -79,34 +97,42 @@ def train(epochs: int = 8, lr: float = 2e-4, rank: int = 16) -> Path:
             "q_proj", "k_proj", "v_proj", "o_proj",
             "gate_proj", "up_proj", "down_proj",
         ],
-    )
+    ))
 
-    sft_config = SFTConfig(
+    def _tokenize(example: Dict) -> Dict:
+        """Render the chat template and tokenize one example."""
+        text = tokenizer.apply_chat_template(
+            example["messages"], tokenize=False
+        )
+        return tokenizer(text, truncation=True, max_length=max_length)
+
+    train_ds = load_dataset(
+        "json", data_files=str(PROC_DIR / "train.jsonl"), split="train"
+    )
+    train_ds = train_ds.map(_tokenize, remove_columns=train_ds.column_names)
+
+    use_bf16 = _supports_bf16()
+    args = TrainingArguments(
         output_dir=str(ADAPTER_DIR),
         num_train_epochs=epochs,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=4,
         learning_rate=lr,
         logging_steps=5,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        save_total_limit=1,
-        bf16=_device() == "cuda",
+        save_strategy="no",
+        bf16=use_bf16,
+        fp16=torch.cuda.is_available() and not use_bf16,
         report_to="none",
-        assistant_only_loss=True,  # train only on the assistant (rewrite) turn
-        max_length=1024,
     )
 
-    trainer = SFTTrainer(
+    trainer = Trainer(
         model=model,
-        args=sft_config,
+        args=args,
         train_dataset=train_ds,
-        eval_dataset=val_ds,
-        peft_config=lora_config,
-        processing_class=tokenizer,
+        data_collator=DataCollatorForLanguageModeling(tokenizer, mlm=False),
     )
     trainer.train()
-    trainer.save_model(str(ADAPTER_DIR))
+    model.save_pretrained(str(ADAPTER_DIR))
     tokenizer.save_pretrained(str(ADAPTER_DIR))
     print(f"[model] Adapter saved -> {ADAPTER_DIR}")
     return ADAPTER_DIR
@@ -126,7 +152,7 @@ class Rewriter:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self.model = AutoModelForCausalLM.from_pretrained(
-            BASE_MODEL, torch_dtype=torch.float32, device_map=_device()
+            BASE_MODEL, dtype=torch.float32, device_map=_device()
         )
 
         if use_adapter and ADAPTER_DIR.exists():
